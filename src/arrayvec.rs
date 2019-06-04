@@ -1,4 +1,8 @@
-use core::{mem::MaybeUninit, ptr, ops::{Deref, DerefMut}, slice};
+use core::{
+    mem::MaybeUninit,
+    ops::{Deref, DerefMut},
+    ptr, slice,
+};
 
 use crate::{array::Array, uninitarray::UninitArray};
 
@@ -77,7 +81,7 @@ impl<A: Array> ArrayVec<A> {
     }
 }
 
-impl <A: Array> Deref for ArrayVec<A> {
+impl<A: Array> Deref for ArrayVec<A> {
     type Target = [A::Item];
 
     fn deref(&self) -> &Self::Target {
@@ -89,7 +93,7 @@ impl <A: Array> Deref for ArrayVec<A> {
     }
 }
 
-impl <A: Array> DerefMut for ArrayVec<A> {
+impl<A: Array> DerefMut for ArrayVec<A> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe {
             let ptr: *mut MaybeUninit<A::Item> = self.array.as_mut_ptr();
@@ -105,12 +109,15 @@ impl<A: Array> Drop for ArrayVec<A> {
     }
 }
 
-impl <A: Array> IntoIterator for ArrayVec<A> {
+impl<A: Array> IntoIterator for ArrayVec<A> {
     type Item = A::Item;
     type IntoIter = IntoIter<A>;
 
     fn into_iter(self) -> Self::IntoIter {
-        IntoIter { array: self, index: 0 }
+        IntoIter {
+            array: self,
+            index: 0,
+        }
     }
 }
 
@@ -119,7 +126,7 @@ pub struct IntoIter<A: Array> {
     index: usize,
 }
 
-impl <A: Array> Iterator for IntoIter<A> {
+impl<A: Array> Iterator for IntoIter<A> {
     type Item = A::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -127,7 +134,8 @@ impl <A: Array> Iterator for IntoIter<A> {
             None
         } else {
             unsafe {
-                let elem: *mut MaybeUninit<A::Item> = self.array.array.get_unchecked_mut(self.index);
+                let elem: *mut MaybeUninit<A::Item> =
+                    self.array.array.get_unchecked_mut(self.index);
                 let elem = ptr::replace(elem, MaybeUninit::uninit()).assume_init();
                 self.index += 1;
                 Some(elem)
@@ -136,7 +144,7 @@ impl <A: Array> Iterator for IntoIter<A> {
     }
 }
 
-impl <A: Array> DoubleEndedIterator for IntoIter<A> {
+impl<A: Array> DoubleEndedIterator for IntoIter<A> {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.index == self.array.len {
             None
@@ -146,13 +154,13 @@ impl <A: Array> DoubleEndedIterator for IntoIter<A> {
                 self.array.set_len(new_len);
                 let elem = self.array.array.get_unchecked_mut(new_len);
                 let elem = ptr::replace(elem, MaybeUninit::uninit()).assume_init();
-                Some(elem) 
+                Some(elem)
             }
         }
     }
 }
 
-impl <A: Array> Drop for IntoIter<A> {
+impl<A: Array> Drop for IntoIter<A> {
     fn drop(&mut self) {
         let index = self.index;
         let len = self.array.len;
@@ -160,10 +168,8 @@ impl <A: Array> Drop for IntoIter<A> {
         unsafe {
             self.array.set_len(0);
 
-            let elements = slice::from_raw_parts_mut(
-                self.array.get_unchecked_mut(index),
-                len - index,
-            );
+            let elements =
+                slice::from_raw_parts_mut(self.array.get_unchecked_mut(index), len - index);
 
             ptr::drop_in_place(elements)
         }
