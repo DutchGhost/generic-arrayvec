@@ -5,7 +5,7 @@ pub mod error;
 use error::CapacityError;
 
 mod string;
-use string::ArrayString;
+pub use string::ArrayString;
 
 use core::{
     mem::{self, MaybeUninit},
@@ -338,9 +338,16 @@ impl <T, const N: usize> FusedIterator for IntoIter<T, {N}> {}
 mod tests {
     use super::*;
 
+    fn length_erasure<T, const N: usize>(_: &ArrayVec<T, {N}>) {
+
+    }
+
     #[test]
     fn test_to_ensure_it_doesnt_ice() {
+
         let mut v = ArrayVec::<u8, { 399 }>::default();
+
+        length_erasure(&v);
 
         assert!(v.is_empty());
         assert!(!v.is_full());
@@ -357,6 +364,8 @@ mod tests {
         v.clear();
 
         assert!(v.is_empty());
+
+        assert!(v.into_inner().is_err());
     }
 
     #[test]
