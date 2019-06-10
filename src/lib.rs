@@ -1,18 +1,19 @@
-#![no_std]
+//#![no_std]
 #![feature(const_generics)]
 
 pub mod error;
 use error::CapacityError;
 
-mod string;
-pub use string::ArrayString;
+//mod string;
+//pub use string::ArrayString;
+mod macros;
 
 use core::{
     mem::{self, MaybeUninit},
     ptr,
     slice,
     ops::{Deref, DerefMut},
-    iter::{FusedIterator},
+    iter::{FusedIterator, Extend, FromIterator},
 };
 
 pub struct ArrayVec<T, const N: usize> {
@@ -48,10 +49,11 @@ impl<T, const N: usize> ArrayVec<T, { N }> {
         self.len() == 0
     }
 
-    /// Returns whether the `ArrayVec` is full.
-    #[inline(always)]
-    pub const fn is_full(&self) -> bool {
-        self.len() == self.capacity()
+    constify! {
+        if #[cfg(not(miri))]
+        pub fn is_full(self: &Self) -> bool {
+            self.len() == self.capacity()
+        }    
     }
 
     /// Returns the number of elements in the `ArrayVec`.
@@ -60,21 +62,31 @@ impl<T, const N: usize> ArrayVec<T, { N }> {
         self.len
     }
 
-    /// Returns the capacity of the `ArrayVec`.
-    #[inline(always)]
-    pub const fn capacity(&self) -> usize {
-        N
+    constify! {
+        if #[cfg(not(miri))]
+        pub fn capacity(self: &Self) -> usize {
+            #[cfg(not(miri))]
+            {
+                N
+            }
+
+            #[cfg(miri)]
+            {
+                self.array.len()
+            }
+        }
     }
 
-    /// Returns the capacity left in the `ArrayVec`.
-    #[inline(always)]
-    pub const fn remaining_capacity(&self) -> usize {
-        self.capacity() - self.len()
+    constify! {
+        if #[cfg(not(miri))]
+        pub fn remaining_capacity(self: &Self) -> usize {
+            self.capacity() - self.len()
+        }
     }
 
     /// Sets the length of the `ArrayVec` to `length`,
     /// without dropping or moving elements.
-    /// 
+    ///
     /// # Unsafe
     /// This function is marked unsafe, because it changes
     /// the number of `valid` (e.g written-to) elements.
@@ -103,7 +115,7 @@ impl<T, const N: usize> ArrayVec<T, { N }> {
     #[inline]
     pub unsafe fn push_unchecked(&mut self, item: T) {
         let len = self.len();
-        debug_assert!(len < N);
+        debug_assert!(len < self.capacity());
         ptr::write(self.array.get_unchecked_mut(len).as_mut_ptr(), item);
         self.set_len(len + 1);
     }
@@ -170,11 +182,31 @@ impl<T, const N: usize> ArrayVec<T, { N }> {
                 // this calls DerefMut on self, to get a slice of &mut [..self.len].
                 // basically this is dropping all elements between self[new_len..self.len].
                 let truncated: *mut [T] = self.get_unchecked_mut(new_len..);
-                self.set_len(new_len);
                 ptr::drop_in_place(truncated);
+                self.set_len(new_len);
             }
         }
     }
+
+    pub fn try_extend_from_slice(&mut self, slice: &[T]) -> Result<(), CapacityError>
+    where
+        T: Copy
+    {
+        if self.remaining_capacity() < slice.len() {
+            return Err(CapacityError::new(()));
+        } else {
+            let self_len = self.len();
+            let slice_len = slice.len();
+
+            unsafe {
+                let dst = self.array.get_unchecked_mut(0).as_mut_ptr().offset(self_len as isize);
+                ptr::copy_nonoverlapping(slice.as_ptr(), dst, slice_len);
+                self.set_len(self_len + slice_len);
+            }
+            Ok(())
+        }
+    }
+
 
     #[inline(always)]
     pub fn clear(&mut self) {
@@ -240,6 +272,43 @@ impl <T, const N: usize> DerefMut for ArrayVec<T, {N}> {
     }
 }
 
+impl <T, const N: usize> Extend<T> for ArrayVec<T, {N}> {
+    fn extend<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = T>
+    {
+        let take = self.remaining_capacity();
+        
+        let mut iter = iter.into_iter();
+
+        let array = &mut self.array;
+        let len = &mut self.len;
+        
+        unsafe {
+            for dst in array.get_unchecked_mut(*len..*len + take) {
+                match iter.next() {
+                    Some(item) => {
+                        ptr::write(dst.as_mut_ptr(), item);
+                        *len += 1;
+                    }
+                    None => break,
+                }
+            }
+        }
+    }
+}
+
+impl <T, const N: usize> FromIterator<T> for ArrayVec<T, {N}> {
+    fn from_iter<I>(iter: I) -> Self
+    where
+        I: IntoIterator<Item = T>
+    {
+        let mut array = ArrayVec::<T, {N}>::default();
+        array.extend(iter);
+        array
+    }
+}
+
 impl <'a, T, const N: usize> IntoIterator for &'a ArrayVec<T, {N}> {
     type Item = &'a T;
     type IntoIter = slice::Iter<'a, T>;
@@ -290,7 +359,7 @@ impl <T, const N: usize> Drop for IntoIter<T, {N}> {
             ptr::drop_in_place(elements);
         }
     }
-}  
+}
 
 impl <T, const N: usize> Iterator for IntoIter<T, {N}> {
     type Item = T;
@@ -361,11 +430,17 @@ mod tests {
         assert_eq!(v.pop(), Some(30));
         assert_eq!(v.len(), 1);
 
+        v.extend(0..10);
+        
+        assert_eq!(&*v, &[20, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        assert_eq!(v.len(), 11);
+
         v.clear();
 
         assert!(v.is_empty());
 
         assert!(v.into_inner().is_err());
+
     }
 
     #[test]
@@ -390,5 +465,10 @@ mod tests {
         assert_eq!(iter.next(), Some(4));
         assert_eq!(iter.next(), None);
         assert_eq!(iter.next_back(), None);
+    }
+
+    #[test]
+    fn empty_array_vec() {
+        let mut v: ArrayVec<String, {0}> = std::iter::repeat(String::from("WORLD")).take(100).collect();
     }
 }

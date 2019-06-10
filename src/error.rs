@@ -3,7 +3,7 @@ use core::{
     fmt::{self, Debug},
 };
 
-pub struct CapacityError<T>(T);
+pub struct CapacityError<T = ()>(T);
 
 impl <T> CapacityError<T> {
     #[inline]
