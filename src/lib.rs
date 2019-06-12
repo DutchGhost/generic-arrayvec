@@ -101,7 +101,12 @@ impl<T, const N: usize> ArrayVec<T, { N }> {
     pub fn push(&mut self, item: T) {
         self.try_push(item).unwrap()
     }
-
+    
+    /// Tries to push `item` onto the `ArrayVec`.
+    /// Returns `Ok(())` if the ArrayVec had
+    /// enough free space for another item.
+    /// A [`CapacityError`] is returned when there wasn't enough
+    /// free space for another item.
     #[inline]
     pub fn try_push(&mut self, item: T) -> Result<(), CapacityError<T>> {
         if self.len() < self.capacity() {
@@ -179,11 +184,15 @@ impl<T, const N: usize> ArrayVec<T, { N }> {
     pub fn truncate(&mut self, new_len: usize) {
         unsafe {
             if new_len < self.len() {
-                // this calls DerefMut on self, to get a slice of &mut [..self.len].
-                // basically this is dropping all elements between self[new_len..self.len].
-                let truncated: *mut [T] = self.get_unchecked_mut(new_len..);
-                ptr::drop_in_place(truncated);
+                let old_len = self.len();
+
+                // panic safety,
+                // dont double drop when destructors panic.
                 self.set_len(new_len);
+                let truncated: *mut [T] = self.get_unchecked_mut(new_len..old_len);
+                // truncated is self[new_len..old_len] *before* we did set the len
+                // to the new len, which we had to do for panic safety.
+                ptr::drop_in_place(truncated);
             }
         }
     }
@@ -354,8 +363,9 @@ impl <T, const N: usize> Drop for IntoIter<T, {N}> {
 
         unsafe {
             // Drop the elements between index..len.
-            let elements: *mut [T] = self.array.get_unchecked_mut(index..len);
+            
             self.array.set_len(0);
+            let elements: *mut [T] = self.array.get_unchecked_mut(index..len);
             ptr::drop_in_place(elements);
         }
     }
@@ -465,10 +475,32 @@ mod tests {
         assert_eq!(iter.next(), Some(4));
         assert_eq!(iter.next(), None);
         assert_eq!(iter.next_back(), None);
+
+        let mut v: ArrayVec<i32, {10}> = (0..10).collect();
+
+        let mut iter = v.into_iter();
     }
 
     #[test]
     fn empty_array_vec() {
         let mut v: ArrayVec<String, {0}> = std::iter::repeat(String::from("WORLD")).take(100).collect();
+        mem::forget(v);
     }
+
+    #[test]
+    fn test_collect() {
+        let mut v: ArrayVec<String, {10}> = std::iter::repeat(String::from("Helloooooo there")).take(100).collect();
+        assert_eq!(v.len(), 10);
+        let array = v.into_inner();
+    }
+
+    #[test]
+    //#[should_panic]
+    fn panic_while_truncate() {
+        struct DropPanic(Box<usize>);
+
+        let mut v: ArrayVec<DropPanic, {20}> = (0..10).map(Box::new).map(DropPanic).collect();
+
+        v.truncate(5);
+    } 
 }
